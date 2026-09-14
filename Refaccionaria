@@ -1,0 +1,251 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+import sqlite3
+
+# --- DATABASE SETUP ---
+def init_db():
+    conn = sqlite3.connect('henko_inventory.db')
+    cursor = conn.cursor()
+    # Table for main inventory
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS inventory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            part_number TEXT UNIQUE,
+            name TEXT NOT NULL,
+            quantity INTEGER NOT NULL,
+            price REAL
+        )
+    ''')
+    # Table for missing items (Faltantes)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS faltantes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            part_number TEXT,
+            name TEXT NOT NULL,
+            notes TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+# --- APPLICATION CLASS ---
+class HenkoApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Refaccionaria Henko - Sistema de Inventario")
+        self.root.geometry("900x600")
+        
+        init_db()
+        self.create_widgets()
+        self.load_inventory_data()
+        self.load_faltantes_data()
+
+    def create_widgets(self):
+        # Notebook (Tabs)
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill='both', expand=True, padx=10, pady=10)
+
+        # Tabs
+        self.tab_inventory = ttk.Frame(self.notebook)
+        self.tab_faltantes = ttk.Frame(self.notebook)
+        
+        self.notebook.add(self.tab_inventory, text='Inventario / Compras')
+        self.notebook.add(self.tab_faltantes, text='Lista de Faltantes')
+
+        self.setup_inventory_tab()
+        self.setup_faltantes_tab()
+
+    # --- INVENTORY TAB SETUP ---
+    def setup_inventory_tab(self):
+        # Left Panel - Form to Add/Update Buys
+        form_frame = ttk.LabelFrame(self.tab_inventory, text=" Registrar Nueva Compra / Entrada ", padding=10)
+        form_frame.pack(side='left', fill='y', padx=10, pady=10)
+
+        ttk.Label(form_frame, text="Número de Parte:").grid(row=0, column=0, sticky='w', pady=5)
+        self.ent_part = ttk.Entry(form_frame)
+        self.ent_part.grid(row=0, column=1, pady=5, padx=5)
+
+        ttk.Label(form_frame, text="Nombre/Descripción:").grid(row=1, column=0, sticky='w', pady=5)
+        self.ent_name = ttk.Entry(form_frame)
+        self.ent_name.grid(row=1, column=1, pady=5, padx=5)
+
+        ttk.Label(form_frame, text="Cantidad:").grid(row=2, column=0, sticky='w', pady=5)
+        self.ent_qty = ttk.Entry(form_frame)
+        self.ent_qty.grid(row=2, column=1, pady=5, padx=5)
+
+        ttk.Label(form_frame, text="Precio Público:").grid(row=3, column=0, sticky='w', pady=5)
+        self.ent_price = ttk.Entry(form_frame)
+        self.ent_price.grid(row=3, column=1, pady=5, padx=5)
+
+        btn_save = ttk.Button(form_frame, text="Guardar Entrada", command=self.save_purchase)
+        btn_save.grid(row=4, column=0, columnspan=2, pady=15, sticky='ew')
+
+        # Right Panel - View Inventory
+        view_frame = ttk.LabelFrame(self.tab_inventory, text=" Stock Actual ", padding=10)
+        view_frame.pack(side='right', fill='both', expand=True, padx=10, pady=10)
+
+        # Table
+        self.tree_inv = ttk.Treeview(view_frame, columns=('part', 'name', 'qty', 'price'), show='headings')
+        self.tree_inv.heading('part', text='Núm. Parte')
+        self.tree_inv.heading('name', text='Descripción')
+        self.tree_inv.heading('qty', text='Cantidad')
+        self.tree_inv.heading('price', text='Precio')
+        
+        self.tree_inv.column('part', width=100)
+        self.tree_inv.column('name', width=250)
+        self.tree_inv.column('qty', width=80, anchor='center')
+        self.tree_inv.column('price', width=80, anchor='e')
+        
+        self.tree_inv.pack(fill='both', expand=True)
+
+    # --- FALTANTES TAB SETUP ---
+    def setup_faltantes_tab(self):
+        # Left Panel - Add Faltante
+        form_frame = ttk.LabelFrame(self.tab_faltantes, text=" Reportar Faltante ", padding=10)
+        form_frame.pack(side='left', fill='y', padx=10, pady=10)
+
+        ttk.Label(form_frame, text="Núm. Parte (Opcional):").grid(row=0, column=0, sticky='w', pady=5)
+        self.ent_f_part = ttk.Entry(form_frame)
+        self.ent_f_part.grid(row=0, column=1, pady=5, padx=5)
+
+        ttk.Label(form_frame, text="Artículo / Refacción:").grid(row=1, column=0, sticky='w', pady=5)
+        self.ent_f_name = ttk.Entry(form_frame)
+        self.ent_f_name.grid(row=1, column=1, pady=5, padx=5)
+
+        ttk.Label(form_frame, text="Notas / Proveedor:").grid(row=2, column=0, sticky='nw', pady=5)
+        self.ent_f_notes = tk.Text(form_frame, width=20, height=5)
+        self.ent_f_notes.grid(row=2, column=1, pady=5, padx=5)
+
+        btn_f_save = ttk.Button(form_frame, text="Agregar a Faltantes", command=self.save_faltante)
+        btn_f_save.grid(row=3, column=0, columnspan=2, pady=15, sticky='ew')
+
+        # Right Panel - View Faltantes
+        view_frame = ttk.LabelFrame(self.tab_faltantes, text=" Lista de Refacciones Faltantes ", padding=10)
+        view_frame.pack(side='right', fill='both', expand=True, padx=10, pady=10)
+
+        self.tree_fal = ttk.Treeview(view_frame, columns=('id', 'part', 'name', 'notes'), show='headings')
+        self.tree_fal.heading('id', text='ID')
+        self.tree_fal.heading('part', text='Núm. Parte')
+        self.tree_fal.heading('name', text='Artículo')
+        self.tree_fal.heading('notes', text='Notas')
+        
+        self.tree_fal.column('id', width=40, anchor='center')
+        self.tree_fal.column('part', width=100)
+        self.tree_fal.column('name', width=200)
+        self.tree_fal.column('notes', width=250)
+        
+        self.tree_fal.pack(fill='both', expand=True)
+
+        btn_remove_fal = ttk.Button(view_frame, text="Marcar como Surtido / Eliminar", command=self.remove_faltante)
+        btn_remove_fal.pack(pady=5, anchor='e')
+
+    # --- DATABASE OPERATIONS ---
+    def load_inventory_data(self):
+        for item in self.tree_inv.get_children():
+            self.tree_inv.delete(item)
+        
+        conn = sqlite3.connect('henko_inventory.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT part_number, name, quantity, price FROM inventory")
+        for row in cursor.fetchall():
+            self.tree_inv.insert('', 'end', values=row)
+        conn.close()
+
+    def load_faltantes_data(self):
+        for item in self.tree_fal.get_children():
+            self.tree_fal.delete(item)
+            
+        conn = sqlite3.connect('henko_inventory.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, part_number, name, notes FROM faltantes")
+        for row in cursor.fetchall():
+            self.tree_fal.insert('', 'end', values=row)
+        conn.close()
+
+    def save_purchase(self):
+        part = self.ent_part.get().strip()
+        name = self.ent_name.get().strip()
+        qty_str = self.ent_qty.get().strip()
+        price_str = self.ent_price.get().strip()
+
+        if not part or not name or not qty_str:
+            messagebox.showerror("Error", "Número de Parte, Descripción y Cantidad son obligatorios.")
+            return
+
+        try:
+            qty = int(qty_str)
+            price = float(price_str) if price_str else 0.0
+        except ValueError:
+            messagebox.showerror("Error", "Cantidad debe ser un número entero y Precio un número decimal.")
+            return
+
+        conn = sqlite3.connect('henko_inventory.db')
+        cursor = conn.cursor()
+        
+        # Check if item already exists to update quantity, or insert new
+        cursor.execute("SELECT quantity FROM inventory WHERE part_number = ?", (part,))
+        result = cursor.fetchone()
+        
+        if result:
+            new_qty = result[0] + qty
+            cursor.execute("UPDATE inventory SET quantity = ?, price = ?, name = ? WHERE part_number = ?", (new_qty, price, name, part))
+            messagebox.showinfo("Éxito", f"Inventario actualizado. Nueva cantidad para {part}: {new_qty}")
+        else:
+            cursor.execute("INSERT INTO inventory (part_number, name, quantity, price) VALUES (?, ?, ?, ?)", (part, name, qty, price))
+            messagebox.showinfo("Éxito", f"Nueva refacción registrada: {name}")
+
+        conn.commit()
+        conn.close()
+        
+        # Clear fields & reload
+        self.ent_part.delete(0, 'end')
+        self.ent_name.delete(0, 'end')
+        self.ent_qty.delete(0, 'end')
+        self.ent_price.delete(0, 'end')
+        self.load_inventory_data()
+
+    def save_faltante(self):
+        part = self.ent_f_part.get().strip()
+        name = self.ent_f_name.get().strip()
+        notes = self.ent_f_notes.get("1.0", "end").strip()
+
+        if not name:
+            messagebox.showerror("Error", "El nombre de la pieza faltante es obligatorio.")
+            return
+
+        conn = sqlite3.connect('henko_inventory.db')
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO faltantes (part_number, name, notes) VALUES (?, ?, ?)", (part, name, notes))
+        conn.commit()
+        conn.close()
+
+        messagebox.showinfo("Éxito", f"Añadido a la lista de faltantes: {name}")
+        
+        self.ent_f_part.delete(0, 'end')
+        self.ent_f_name.delete(0, 'end')
+        self.ent_f_notes.delete("1.0", "end")
+        self.load_faltantes_data()
+
+    def remove_faltante(self):
+        selected_item = self.tree_fal.selection()
+        if not selected_item:
+            messagebox.showwarning("Atención", "Por favor selecciona un elemento de la lista de faltantes.")
+            return
+            
+        item_values = self.tree_fal.item(selected_item, 'values')
+        record_id = item_values[0]
+
+        conn = sqlite3.connect('henko_inventory.db')
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM faltantes WHERE id = ?", (record_id,))
+        conn.commit()
+        conn.close()
+
+        messagebox.showinfo("Éxito", "Elemento eliminado de la lista de faltantes.")
+        self.load_faltantes_data()
+
+# --- RUN APPLICATION ---
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = HenkoApp(root)
+    root.mainloop()

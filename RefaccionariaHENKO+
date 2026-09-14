@@ -1,0 +1,332 @@
+import { useState, useEffect } from "react";
+import { Search, Plus, X, AlertTriangle, Trash2, Pencil } from "lucide-react";
+
+const ZONES = [
+  { id: "CT", name: "Counter / Fast Movers", area: "counter" },
+  { id: "EL", name: "Electrical & Fasteners", area: "aisle1" },
+  { id: "FF", name: "Filters, Fluids & Consumables", area: "aisle2" },
+  { id: "TL", name: "Tools", area: "aisle3" },
+  { id: "BK", name: "Overflow / Hazmat Cabinet", area: "back" },
+];
+
+const zoneById = (id) => ZONES.find((z) => z.id === id) || ZONES[0];
+
+const emptyForm = { name: "", zone: "CT", qty: "", minQty: "", notes: "" };
+
+export default function ShopInventory() {
+  const [items, setItems] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [query, setQuery] = useState("");
+  const [activeZone, setActiveZone] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState(emptyForm);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await window.storage.get("inventory-items");
+        if (res && res.value) setItems(JSON.parse(res.value));
+      } catch (e) {
+        // no data yet
+      } finally {
+        setLoaded(true);
+      }
+    })();
+  }, []);
+
+  const persist = async (next) => {
+    setItems(next);
+    setSaving(true);
+    try {
+      const res = await window.storage.set("inventory-items", JSON.stringify(next));
+      if (!res) setError("Save failed — try again.");
+      else setError("");
+    } catch (e) {
+      setError("Save failed — try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const nextCode = (zoneId) => {
+    const seq = items.filter((i) => i.zone === zoneId).length + 1;
+    return `${zoneId}-${String(seq).padStart(3, "0")}`;
+  };
+
+  const openAdd = (zoneId) => {
+    setEditingId(null);
+    setForm({ ...emptyForm, zone: zoneId || "CT" });
+    setShowForm(true);
+  };
+
+  const openEdit = (item) => {
+    setEditingId(item.id);
+    setForm({ name: item.name, zone: item.zone, qty: String(item.qty), minQty: String(item.minQty), notes: item.notes || "" });
+    setShowForm(true);
+  };
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (!form.name.trim()) return;
+    if (editingId) {
+      const next = items.map((i) =>
+        i.id === editingId
+          ? { ...i, name: form.name.trim(), zone: form.zone, qty: Number(form.qty) || 0, minQty: Number(form.minQty) || 0, notes: form.notes }
+          : i
+      );
+      persist(next);
+    } else {
+      const code = nextCode(form.zone);
+      const newItem = {
+        id: crypto.randomUUID(),
+        code,
+        name: form.name.trim(),
+        zone: form.zone,
+        qty: Number(form.qty) || 0,
+        minQty: Number(form.minQty) || 0,
+        notes: form.notes,
+      };
+      persist([newItem, ...items]);
+    }
+    setShowForm(false);
+    setForm(emptyForm);
+    setEditingId(null);
+  };
+
+  const removeItem = (id) => {
+    persist(items.filter((i) => i.id !== id));
+  };
+
+  const lowStock = items.filter((i) => i.qty <= i.minQty);
+
+  const filtered = items.filter((i) => {
+    const matchesZone = !activeZone || i.zone === activeZone;
+    const matchesQuery =
+      !query.trim() ||
+      i.name.toLowerCase().includes(query.toLowerCase()) ||
+      i.code.toLowerCase().includes(query.toLowerCase());
+    return matchesZone && matchesQuery;
+  });
+
+  const zoneCount = (zoneId) => items.filter((i) => i.zone === zoneId).length;
+
+  return (
+    <div className="min-h-screen bg-zinc-950 text-zinc-100" style={{ fontFamily: "'Inter', sans-serif" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600&display=swap');
+        .display-font { font-family: 'Oswald', sans-serif; }
+        .mono-font { font-family: 'JetBrains Mono', monospace; }
+      `}</style>
+
+      {/* Header */}
+      <div className="border-b border-zinc-800 bg-zinc-900 px-4 py-4 sm:px-6">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h1 className="display-font text-xl sm:text-2xl font-bold uppercase tracking-wide text-amber-400">
+              Shop Floor
+            </h1>
+            <p className="text-xs text-zinc-500 mono-font">{items.length} items tracked{saving ? " · saving…" : ""}</p>
+          </div>
+          <button
+            onClick={() => openAdd(activeZone)}
+            className="flex items-center gap-1.5 rounded bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-amber-300"
+          >
+            <Plus size={16} /> Add
+          </button>
+        </div>
+      </div>
+
+      <div className="mx-auto max-w-3xl px-4 py-5 sm:px-6">
+        {error && (
+          <div className="mb-4 rounded border border-red-800 bg-red-950 px-3 py-2 text-sm text-red-300">{error}</div>
+        )}
+
+        {/* Low stock alerts */}
+        {lowStock.length > 0 && (
+          <div className="mb-5 rounded border border-red-800 bg-red-950/60 px-3 py-3">
+            <div className="flex items-center gap-2 text-red-300 font-semibold text-sm mb-2">
+              <AlertTriangle size={16} /> {lowStock.length} item{lowStock.length > 1 ? "s" : ""} at or below minimum
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {lowStock.map((i) => (
+                <span key={i.id} className="mono-font text-xs bg-zinc-900 border border-red-800 text-red-300 px-2 py-1 rounded">
+                  {i.code} · {i.name} ({i.qty})
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Zone map */}
+        <div className="mb-5">
+          <h2 className="display-font text-sm uppercase tracking-widest text-zinc-500 mb-2">Zone Map</h2>
+          <div
+            className="grid gap-2"
+            style={{
+              gridTemplateAreas: `"counter counter" "aisle1 aisle2" "aisle3 back"`,
+              gridTemplateColumns: "1fr 1fr",
+            }}
+          >
+            {ZONES.map((z) => (
+              <button
+                key={z.id}
+                style={{ gridArea: z.area }}
+                onClick={() => setActiveZone(activeZone === z.id ? null : z.id)}
+                className={`rounded border px-3 py-3 text-left transition ${
+                  activeZone === z.id
+                    ? "border-amber-400 bg-amber-400/10"
+                    : "border-zinc-800 bg-zinc-900 hover:border-zinc-700"
+                }`}
+              >
+                <div className="mono-font text-xs font-bold text-amber-400">{z.id}</div>
+                <div className="text-sm font-medium text-zinc-200 leading-tight mt-0.5">{z.name}</div>
+                <div className="text-xs text-zinc-500 mt-1">{zoneCount(z.id)} items</div>
+              </button>
+            ))}
+          </div>
+          {activeZone && (
+            <button onClick={() => setActiveZone(null)} className="mt-2 text-xs text-zinc-500 hover:text-zinc-300 underline">
+              Clear zone filter
+            </button>
+          )}
+        </div>
+
+        {/* Search */}
+        <div className="relative mb-4">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search name or location code…"
+            className="w-full rounded border border-zinc-800 bg-zinc-900 py-2 pl-9 pr-3 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-400"
+          />
+        </div>
+
+        {/* Item list */}
+        {!loaded ? (
+          <p className="text-sm text-zinc-500">Loading…</p>
+        ) : filtered.length === 0 ? (
+          <div className="rounded border border-dashed border-zinc-800 py-10 text-center text-sm text-zinc-500">
+            Nothing here yet. Add an item to give it a home.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {filtered.map((i) => {
+              const low = i.qty <= i.minQty;
+              return (
+                <div
+                  key={i.id}
+                  className={`flex items-center justify-between rounded border px-3 py-2.5 ${
+                    low ? "border-red-800 bg-red-950/30" : "border-zinc-800 bg-zinc-900"
+                  }`}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="mono-font text-xs font-bold text-zinc-950 bg-amber-400 px-1.5 py-0.5 rounded shrink-0">
+                      {i.code}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-zinc-100 truncate">{i.name}</div>
+                      <div className="text-xs text-zinc-500 truncate">
+                        {zoneById(i.zone).name} · qty {i.qty}
+                        {i.minQty ? ` (min ${i.minQty})` : ""}
+                        {i.notes ? ` · ${i.notes}` : ""}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0 ml-2">
+                    <button onClick={() => openEdit(i)} className="p-1.5 text-zinc-500 hover:text-amber-400">
+                      <Pencil size={14} />
+                    </button>
+                    <button onClick={() => removeItem(i.id)} className="p-1.5 text-zinc-500 hover:text-red-400">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Add/Edit form modal */}
+      {showForm && (
+        <div className="fixed inset-0 bg-black/70 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-t-lg sm:rounded-lg w-full sm:max-w-md p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="display-font uppercase tracking-wide text-amber-400 font-semibold">
+                {editingId ? "Edit Item" : "New Item"}
+              </h3>
+              <button onClick={() => setShowForm(false)} className="text-zinc-500 hover:text-zinc-200">
+                <X size={18} />
+              </button>
+            </div>
+            <form onSubmit={submit} className="space-y-3">
+              <div>
+                <label className="text-xs text-zinc-500">Name</label>
+                <input
+                  autoFocus
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  className="w-full mt-1 rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm focus:outline-none focus:border-amber-400"
+                  placeholder="e.g. Rear brake pads – R6"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-zinc-500">Zone</label>
+                <select
+                  value={form.zone}
+                  onChange={(e) => setForm({ ...form, zone: e.target.value })}
+                  className="w-full mt-1 rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm focus:outline-none focus:border-amber-400"
+                >
+                  {ZONES.map((z) => (
+                    <option key={z.id} value={z.id}>
+                      {z.id} · {z.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-zinc-500">Quantity</label>
+                  <input
+                    type="number"
+                    value={form.qty}
+                    onChange={(e) => setForm({ ...form, qty: e.target.value })}
+                    className="w-full mt-1 rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm focus:outline-none focus:border-amber-400"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-500">Min before alert</label>
+                  <input
+                    type="number"
+                    value={form.minQty}
+                    onChange={(e) => setForm({ ...form, minQty: e.target.value })}
+                    className="w-full mt-1 rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm focus:outline-none focus:border-amber-400"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-zinc-500">Notes (optional)</label>
+                <input
+                  value={form.notes}
+                  onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                  className="w-full mt-1 rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm focus:outline-none focus:border-amber-400"
+                  placeholder="Shelf, supplier, fits-model, etc."
+                />
+              </div>
+              <button
+                type="submit"
+                className="w-full rounded bg-amber-400 py-2.5 text-sm font-semibold text-zinc-950 hover:bg-amber-300"
+              >
+                {editingId ? "Save changes" : "Add to inventory"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
